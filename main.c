@@ -2,173 +2,193 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
-#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <sched.h>
 #include <time.h>
 
-#define ARRAY_SIZE 50
+#define CPU_CORE 4
+
 cpu_set_t cpu_mask;
-// const int array_dimension = 2;
 
-// shared memory kullanmilmali. Cunku child olusturulunca parent bellegini kopyalar ve kendi bellegine aktatarir
-
-// int a[3][3][3] = {{{1, 2, 3}, {1, 2, 3}, {1, 2, 3}},
-//                   {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}},
-//                   {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}}};
-
-// int b[3][3][3] = {{{1, 2, 3}, {1, 2, 3}, {1, 2, 3}},
-//                   {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}},
-//                   {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}}};
-
-int a[ARRAY_SIZE][ARRAY_SIZE][ARRAY_SIZE];
-int b[ARRAY_SIZE][ARRAY_SIZE][ARRAY_SIZE];
-
-int sum2[ARRAY_SIZE][ARRAY_SIZE][ARRAY_SIZE];
-
-void randArray()
+typedef struct Tensor
 {
-    for (int i = 0; i < ARRAY_SIZE; i++)
-        for (int j = 0; j < ARRAY_SIZE; j++)
-            for (int k = 0; k < ARRAY_SIZE; k++)
-            {
-                a[i][j][k] = rand() % 100; // Generate number between 0 to 99
-                b[i][j][k] = rand() % 100;
-            }
+    size_t rows;
+    size_t cols;
+    size_t tubes;
+    int ***data;
+} Tensor;
+
+Tensor *createT(size_t rows, size_t cols, size_t tubes)
+{
+    Tensor *t = malloc(sizeof(Tensor));
+    t->rows = rows;
+    t->cols = cols;
+    t->tubes = tubes;
+    t->data = malloc(rows * sizeof(int **));
+    for (size_t i = 0; i < rows; i++)
+    {
+        t->data[i] = malloc(cols * sizeof(int *));
+        for (size_t j = 0; j < cols; j++)
+        {
+            t->data[i][j] = malloc(tubes * sizeof(int));
+        }
+    }
+    return t;
 }
 
-void forkExample()
+Tensor *initT(Tensor *t)
 {
-
-    int ***sum = (int ***)mmap(NULL, sizeof(int *) * ARRAY_SIZE, PROT_READ | PROT_WRITE,
-                               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-    for (int i = 0; i < ARRAY_SIZE; i++)
+    for (size_t i = 0; i < t->rows; i++)
     {
-        sum[i] = (int **)mmap(NULL, sizeof(int **) * ARRAY_SIZE, PROT_READ | PROT_WRITE,
-                              MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-        for (int j = 0; j < ARRAY_SIZE; j++)
+        for (size_t j = 0; j < t->cols; j++)
         {
-            sum[i][j] = (int *)mmap(NULL, sizeof(int) * ARRAY_SIZE, PROT_READ | PROT_WRITE,
-                                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        }
-    }
-
-    pid_t child_pids[ARRAY_SIZE];
-
-    for (int i = 0; i < ARRAY_SIZE; i++)
-    {
-        pid_t pid = fork();
-        // child process because return value zero
-        if (pid == 0)
-        {
-            CPU_ZERO(&cpu_mask);
-            CPU_SET(i, &cpu_mask);
-            if (sched_setaffinity(getpid(), sizeof(cpu_mask), &cpu_mask) == -1)
+            for (size_t k = 0; k < t->tubes; k++)
             {
-                perror("sched_setaffinity");
-                exit(EXIT_FAILURE);
+                t->data[i][j][k] = rand();
             }
-
-            printf("CPU => %d, Child process => PPID=%d, PID=%d\n", i, getppid(), getpid());
-            for (int j = 0; j < ARRAY_SIZE; j++)
-            {
-                for (int k = 0; k < ARRAY_SIZE; k++)
-                {
-                    sum[i][j][k] = a[i][j][k] + b[i][j][k];
-                    // printf("Child Sum[%d][%d][%d] %d \n", i, j, k, sum[i][j][k]);
-                }
-            }
-            exit(0);
-        }
-        else if (pid > 0)
-        {
-            child_pids[i] = pid;
-        }
-        else
-        {
-            printf("Unable to create child process.\n");
         }
     }
-
-    // Wait for all child processes to finish
-    for (int i = 0; i < ARRAY_SIZE; i++)
-    {
-        waitpid(child_pids[i], NULL, 0);
-    }
-
-    // for (size_t i = 0; i < ARRAY_SIZE; i++)
-    // {
-    //     for (size_t j = 0; j < ARRAY_SIZE; j++)
-    //     {
-    //         for (size_t k = 0; k < ARRAY_SIZE; k++)
-    //         {
-    //             printf("Sum[%ld][%ld][%ld] = %d\n", i, j, k, sum[i][j][k]);
-    //         }
-    //     }
-    //     printf("\n");
-    // }
-
-    // Clean up
-    for (int i = 0; i < ARRAY_SIZE; i++)
-    {
-        for (int j = 0; j < ARRAY_SIZE; j++)
-        {
-            munmap(sum[i][j], sizeof(int) * ARRAY_SIZE); // deletes [][][THIS]
-        }
-        munmap(sum[i], sizeof(int) * ARRAY_SIZE); // deletes [][THIS]
-    }
-    munmap(sum, sizeof(int *) * ARRAY_SIZE); // deletes [THIS]
+    return t;
 }
 
-int notParallelExample()
+void freeT(Tensor *t)
 {
-    for (int i = 0; i < ARRAY_SIZE; i++)
+    for (size_t i = 0; i < t->rows; i++)
     {
-        for (int j = 0; j < ARRAY_SIZE; j++)
+        for (size_t j = 0; j < t->cols; j++)
         {
-            for (int k = 0; k < ARRAY_SIZE; k++)
+            free(t->data[i][j]);
+        }
+        free(t->data[i]);
+    }
+    free(t->data);
+    free(t);
+}
+
+Tensor *partialRowSumT(Tensor *t1, Tensor *t2, size_t startRow, size_t endRow)
+{
+    Tensor *sum = createT(t1->cols, t1->rows, t1->tubes);
+
+    for (size_t i = startRow; i < endRow; i++)
+    {
+        for (size_t j = 0; j < t1->cols; j++)
+        {
+            for (size_t k = 0; k < t1->tubes; k++)
             {
-                sum2[i][j][k] = a[i][j][k] + b[i][j][k];
+                sum->data[i][j][k] = t1->data[i][j][k] + t2->data[i][j][k];
             }
         }
     }
+    return sum;
 }
 
-// int check()
-// {
-//     for (int i = 0; i < ARRAY_SIZE; i++)
-//     {
-//         for (int j = 0; j < ARRAY_SIZE; j++)
-//         {
-//             for (int k = 0; k < ARRAY_SIZE; k++)
-//             {
-//               if(sum[i][j][k])
-//             }
-//         }
-//     }
-// }
+Tensor *parallelSumT(Tensor *t1, Tensor *t2)
+{
+    Tensor *sum = createT(t1->rows, t1->cols, t1->tubes);
+
+    int rowPerCore = t1->rows / CPU_CORE;
+    int remainingRows = t1->rows % CPU_CORE;
+
+    pid_t pid[CPU_CORE];
+    int status;
+
+    for (int i = 0; i < CPU_CORE; i++)
+    {
+        CPU_ZERO(&cpu_mask);
+        CPU_SET(i, &cpu_mask);
+        if (sched_setaffinity(getpid(), sizeof(cpu_mask), &cpu_mask) == -1)
+        {
+            perror("sched_setaffinity");
+            exit(EXIT_FAILURE);
+        }
+        pid[i] = fork();
+
+        if (pid[i] == -1)
+        {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+        else if (pid[i] == 0)
+        {
+            // Child process
+            int startRow = i * rowPerCore;
+            int endRow = (i + 1) * rowPerCore + (i == CPU_CORE - 1 ? remainingRows : 0); // (i + 1) * rowPerCore;
+ 
+            partialRowSumT(t1, t2, startRow, endRow);
+
+            freeT(t1);
+            freeT(t2);
+            exit(EXIT_SUCCESS);
+        }
+    }
+
+    // Wait for all child processes to complete
+    for (int i = 0; i < CPU_CORE; i++)
+    {
+        waitpid(pid[i], &status, 0);
+    }
+
+    return sum;
+}
+
+// Paralel olmayan işlemlerde kullanılır
+Tensor *sumSingleCoreT(Tensor *t1, Tensor *t2)
+{
+    Tensor *sum = createT(t1->rows, t1->cols, t1->tubes);
+
+    for (size_t i = 0; i < t1->rows; i++)
+    {
+        for (size_t j = 0; j < t1->cols; j++)
+        {
+            for (size_t k = 0; k < t1->tubes; k++)
+            {
+                sum->data[i][j][k] = t1->data[i][j][k] + t2->data[i][j][k];
+            }
+        }
+    }
+
+    return sum;
+}
 
 int main()
 {
     double time_spent;
     clock_t begin, end;
 
-    randArray();
+    Tensor *t1 = createT(1000, 100, 1000);
+    Tensor *t2 = createT(1000, 100, 1000);
+    initT(t1);
+    initT(t2);
+    t1->data[0][0][0] = 3;
+    t2->data[0][0][0] = 5;
+
     begin = clock();
-    forkExample();
+    Tensor *sum = parallelSumT(t1, t2);
     end = clock();
 
     time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-    printf("%f \n", time_spent);
+    printf("Birdan fazla çekirdek ile: %f \n", time_spent);
 
     begin = clock();
-    notParallelExample();
+    sumSingleCoreT(t1, t2);
     end = clock();
 
     time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-    printf("%f \n", time_spent);
-    return 0;
+    printf("Tek Core ile yapılan işlem: %f \n", time_spent);
+
+    // Tensor *t = partialRowSumT(t1, t2, 0, 2);
+
+    // printf("%li %li %li\n", t->rows, t->cols, t->tubes);
+    // for (int i = 0; i < 2; i++)
+    // {
+    //     for (int j = 0; j < 2; j++)
+    //     {
+    //         for (int k = 0; k < 2; k++)
+    //         {
+    //             printf("%i \t", t->data[i][j][k]);
+    //         }
+    //     }
+    //     printf("\n");
+    // }
 }
