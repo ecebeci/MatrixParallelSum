@@ -7,51 +7,53 @@
 #include <unistd.h>
 #include <sched.h>
 #include <time.h>
+#define BILLION 1000000000.0
 
-#define CPU_CORE 4
-#define ARRAY_SIZE 255
-cpu_set_t cpu_mask;
+int cpu_cores;
+int array_size;
+int test_count;
 
-int a[ARRAY_SIZE][ARRAY_SIZE][ARRAY_SIZE];
-int b[ARRAY_SIZE][ARRAY_SIZE][ARRAY_SIZE];
-int sum2[ARRAY_SIZE][ARRAY_SIZE][ARRAY_SIZE];
+int ***a;
+int ***b;
 int ***sum;
+
+cpu_set_t cpu_mask;
 
 void randArray()
 {
-    for (int i = 0; i < ARRAY_SIZE; i++)
-        for (int j = 0; j < ARRAY_SIZE; j++)
-            for (int k = 0; k < ARRAY_SIZE; k++)
+    for (int i = 0; i < array_size; i++)
+        for (int j = 0; j < array_size; j++)
+            for (int k = 0; k < array_size; k++)
             {
                 a[i][j][k] = rand() % 100; // Generate number between 0 to 99
                 b[i][j][k] = rand() % 100;
             }
 }
 
-void forkExample()
+void parallelSum()
 {
-    sum = (int ***)mmap(NULL, sizeof(int **) * ARRAY_SIZE + sizeof(int *) * ARRAY_SIZE * ARRAY_SIZE + sizeof(int) * ARRAY_SIZE * ARRAY_SIZE * ARRAY_SIZE,
+    sum = (int ***)mmap(NULL, sizeof(int **) * array_size + sizeof(int *) * array_size * array_size + sizeof(int) * array_size * array_size * array_size,
                         PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-    int **row_ptrs = (int **)(sum + ARRAY_SIZE);
-    int *data = (int *)(row_ptrs + ARRAY_SIZE * ARRAY_SIZE);
+    int **row_ptrs = (int **)(sum + array_size);
+    int *data = (int *)(row_ptrs + array_size * array_size);
 
-    for (int i = 0; i < ARRAY_SIZE; i++)
+    for (int i = 0; i < array_size; i++)
     {
-        sum[i] = row_ptrs + i * ARRAY_SIZE;
+        sum[i] = row_ptrs + i * array_size;
 
-        for (int j = 0; j < ARRAY_SIZE; j++)
+        for (int j = 0; j < array_size; j++)
         {
-            sum[i][j] = data + (i * ARRAY_SIZE + j) * ARRAY_SIZE;
+            sum[i][j] = data + (i * array_size + j) * array_size;
         }
     }
 
-    int rowPerCore = ARRAY_SIZE / CPU_CORE;
-    int remainingRows = ARRAY_SIZE % CPU_CORE;
+    int rowPerCore = array_size / cpu_cores;
+    int remainingRows = array_size % cpu_cores;
 
-    pid_t pid[ARRAY_SIZE];
+    pid_t pid[array_size];
 
-    for (int core = 0; core < CPU_CORE; core++)
+    for (int core = 0; core < cpu_cores; core++)
     {
         CPU_ZERO(&cpu_mask);
         CPU_SET(core, &cpu_mask);
@@ -71,12 +73,12 @@ void forkExample()
         {
             // Child process
             int startRow = core * rowPerCore;
-            int endRow = (core + 1) * rowPerCore + (core == CPU_CORE - 1 ? remainingRows : 0); // (i + 1) * rowPerCore;
+            int endRow = (core + 1) * rowPerCore + (core == cpu_cores - 1 ? remainingRows : 0); // (i + 1) * rowPerCore;
             for (int i = startRow; i < endRow; i++)
             {
-                for (int j = 0; j < ARRAY_SIZE; j++)
+                for (int j = 0; j < array_size; j++)
                 {
-                    for (int k = 0; k < ARRAY_SIZE; k++)
+                    for (int k = 0; k < array_size; k++)
                     {
                         sum[i][j][k] = a[i][j][k] + b[i][j][k];
                     }
@@ -88,64 +90,60 @@ void forkExample()
     }
 
     // Wait for all child processes to finish
-    for (int i = 0; i < ARRAY_SIZE; i++)
+    for (int i = 0; i < array_size; i++)
     {
         waitpid(pid[i], NULL, 0);
     }
+
+    munmap(sum, sizeof(int **) * array_size + sizeof(int *) * array_size * array_size + sizeof(int) * array_size * array_size * array_size);
 }
 
-int notParallelExample()
+// TODO: Checker oncesi 2 tanesi mem'e aktarildigi icin boyutlar RAMe göre sınırlı. (WSL de 500den yukarı cıkmadı)
+int main(int argc, char **argv)
 {
-    for (int i = 0; i < ARRAY_SIZE; i++)
+    if (argc != 4)
     {
-        for (int j = 0; j < ARRAY_SIZE; j++)
+        printf("Kullanim: %s <test_count> <cpu_cores> <array_size>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+    // Parse the arguments
+    test_count = atoi(argv[1]);
+    cpu_cores = atoi(argv[2]);
+    array_size = atoi(argv[3]);
+
+    // Allocate memory for the arrays
+    a = (int ***)malloc(sizeof(int **) * array_size);
+    b = (int ***)malloc(sizeof(int **) * array_size);
+    sum = (int ***)malloc(sizeof(int **) * array_size);
+
+    for (int i = 0; i < array_size; i++)
+    {
+        a[i] = (int **)malloc(sizeof(int *) * array_size);
+        b[i] = (int **)malloc(sizeof(int *) * array_size);
+        sum[i] = (int **)malloc(sizeof(int *) * array_size);
+
+        for (int j = 0; j < array_size; j++)
         {
-            for (int k = 0; k < ARRAY_SIZE; k++)
-            {
-                sum2[i][j][k] = a[i][j][k] + b[i][j][k];
-            }
+            a[i][j] = (int *)malloc(sizeof(int) * array_size);
+            b[i][j] = (int *)malloc(sizeof(int) * array_size);
+            sum[i][j] = (int *)malloc(sizeof(int) * array_size);
         }
     }
-}
-
-int duplicateChecker()
-{
-    for (int i = 0; i < ARRAY_SIZE; i++)
-    {
-        for (int j = 0; j < ARRAY_SIZE; j++)
-        {
-            for (int k = 0; k < ARRAY_SIZE; k++)
-            {
-                if (sum2[i][j][k] != sum[i][j][k])
-                    return 1;
-            }
-        }
-    }
-    return 0;
-}
-
-int main()
-{
     double time_spent;
-    clock_t begin, end;
-
+    struct timespec start, end;
     randArray();
-    begin = clock();
-    forkExample();
-    end = clock();
 
-    time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-    printf("%f \n", time_spent);
+    clock_gettime(CLOCK_REALTIME, &start);
+    for (int i = 0; i < test_count; i++)
+    {
+        parallelSum();
+    }
 
-    begin = clock();
-    notParallelExample();
-    end = clock();
-
-    time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-    printf("%f \n", time_spent);
-
-    int checker = duplicateChecker(sum, sum2);
-    printf("Esitlik Sonuc: %i \n", checker);
+    clock_gettime(CLOCK_REALTIME, &end);
+    time_spent = (end.tv_sec - start.tv_sec) +
+                 (end.tv_nsec - start.tv_nsec) / BILLION;
+    time_spent /= test_count;
+    printf("Paralel toplama sonucu ortalamasi: %f\n", time_spent);
 
     return 0;
 }
